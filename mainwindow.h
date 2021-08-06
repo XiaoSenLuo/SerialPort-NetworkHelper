@@ -27,7 +27,7 @@
 #include "main.h"
 #include "settingdialog.h"
 #include "ttkmarqueelabel.h"
-
+#include "serialhelper.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -72,7 +72,7 @@ public:
     enum DEVICE_STATUS{STATUS_CLOSE = -1, STATUS_OPEN = 0, STATUS_PAUSE = 1, STATUS_OCCUR_ERROR = 2};
 public slots:
     void handle_serial_recieve_data(const QByteArray &data, int len);
-//    void handle_serial_open_status(int b){ serialStatus = (b ? STATUS_OPEN : STATUS_CLOSE); ui_serial_toggle_pbtSend(serialStatus ? false : true); }
+
     void handle_serial_error(int error);
 
     void handle_tcp_server_occur_error(int error){
@@ -113,6 +113,9 @@ public slots:
     }
 
 private slots:
+
+    void handle_serialhelper_readyread(void);
+
     void handle_ui_line_mode_changed(int index);
     void handle_ui_line_mode_changed(const QString& perf);
     // setting
@@ -143,6 +146,8 @@ private:
     QTimer refresh_port_timer;
     QTimer resend_timer;
 
+    SerialHelper *s_helper;         // 串口助手
+
 //    bool isOpen = false;
 
     int serialStatus = STATUS_CLOSE;
@@ -170,6 +175,8 @@ private:
 
     void ui_refreshPort(void);
     void ui_refreshNetInterface(void);
+
+    void apply_ui_serial_config(const SerialConfig& config);
 
     void update_ui_serial_config(void);
 
@@ -417,7 +424,7 @@ private:
     // Tabel View
 
     void ui_net_addConnectionToTabel(const QString& ip, int id){
-        this->ui->tbvClientConnection;
+//        this->ui->tbvClientConnection;
     }
 
     void ui_showTime();
@@ -441,6 +448,7 @@ private:
         }
         this->ui->cbbRecFontColor->setCurrentIndex(7);
     }
+
     QColor ui_recieve_getRecieveFontColor(void){
         return Qt::GlobalColor(this->ui->cbbRecFontColor->currentIndex() + 2);
     }
@@ -452,6 +460,7 @@ private:
         this->ui->pteSend->setFont(font);
         this->ui->pteShowRecieve->setFont(font);
     }
+
 public:
     // Serial
     const int ui_serial_getPortNumber(void){ return this->ui->cbbPort->count(); }
@@ -470,6 +479,7 @@ public:
         }
         return QSerialPort::Parity(pi);
     }
+
     QSerialPort::StopBits ui_serial_getStopBit(void){ return QSerialPort::StopBits(this->ui->cbbStop->currentIndex() + 1); }
     QSerialPort::FlowControl ui_serial_getFlow(void){ return QSerialPort::FlowControl(this->ui->cbbFlow->currentIndex()); }
 

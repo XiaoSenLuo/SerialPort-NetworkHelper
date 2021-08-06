@@ -13,14 +13,17 @@ int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
     MainWindow w;
+#ifdef    SERIAL_THREAD
     QThread sThread;
+#endif
     QThread tThread;
     QThread uThread;
 
-    SerialThread *serialThread = new SerialThread();
+//    SerialThread *serialThread = new SerialThread();
     TCPThread *tcpThread = new TCPThread();
     UDPThread *udpThread = new UDPThread();
 
+#ifdef SERIAL_THREAD
 //    qDebug() << "Main:" << QThread::currentThread();
     QObject::connect(&w, &MainWindow::ui_serial_config_changed, serialThread, &SerialThread::handle_serial_changed);
     QObject::connect(&w, &MainWindow::ui_serial_open, serialThread, &SerialThread::handle_serial_open);
@@ -34,6 +37,7 @@ int main(int argc, char *argv[])
 
     serialThread->moveToThread(&sThread);
     sThread.start();
+#endif
 
     // TCP
     QObject::connect(&w, &MainWindow::ui_tcp_start, tcpThread, &TCPThread::tcp_start);
@@ -64,8 +68,10 @@ int main(int argc, char *argv[])
     w.show();
     int res = a.exec();
 
+#ifdef SERIAL_THREAD
     sThread.terminate();
     sThread.wait();
+#endif
 
     tThread.exit();
     tThread.wait();

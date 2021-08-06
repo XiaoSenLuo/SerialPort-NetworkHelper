@@ -24,11 +24,20 @@ MainWindow::MainWindow(QWidget *parent)
 
     ui_statusbar_showRxBytes(rxBytes);
     ui_statusbar_showTxBytes(txBytes);
+
+    s_helper = new SerialHelper(this);
+
+    QObject::connect(s_helper, &SerialHelper::errorOccurred, this, &MainWindow::handle_serial_error);
+    QMetaObject::Connection s_connect = s_helper->callOnReadyRead(this, &MainWindow::handle_serialhelper_readyread);
 }
 
 MainWindow::~MainWindow()
 {
     delete ui;
+    if(s_helper->isOpen()){
+        s_helper->close();
+        s_helper->deleteLater();
+    }
 }
 
 void MainWindow::serial_send(const QString &data, int len)
@@ -41,18 +50,31 @@ void MainWindow::serial_send(const QString &data, int len)
     if(settingConfig.sendConfig.sendMode == ASCII_MODE){
         ui_addSendHistory(sendStr);
         const QByteArray sendBytes = sendStr.toUtf8();
-
         len = sendBytes.size();
+
+
+
+        if(ui_send_isEnableAutoRepeat()) s_helper->setAutoWrite(sendBytes);
+        else s_helper->write(sendBytes);
+
         emit ui_serial_send(sendBytes, len);
+
         txBytes += len;
     }
     if(settingConfig.sendConfig.sendMode == HEX_MODE){
         const QByteArray hex = sendStr.toUtf8().toHex().toUpper();
         len = hex.size();
+
+        s_helper->write(hex);
+
+        if(ui_send_isEnableAutoRepeat()) s_helper->setAutoWrite(hex);
+
+
         emit ui_serial_send(hex, len);
 
         sendStr = QString::fromUtf8(hex);
         ui_addSendHistory(sendStr);
+        txBytes += len;
     }
     if(settingConfig.showConfig.enableShowSend){
         ui_showSend(sendStr, settingConfig.showConfig.enableShowTime);
@@ -78,7 +100,9 @@ void MainWindow::serial_send(void)
 void MainWindow::ui_start_resend()
 {
     int n = this->ui->sbRetime->value();
+#ifdef SERIAL_THREAD
     if(resend_timer.isActive()) resend_timer.stop();
+#endif
     if(n == 0){
         return;
     }
@@ -97,7 +121,13 @@ void MainWindow::ui_start_resend()
         n *= (1000 * 60 * 60);
         break;
     }
+#ifdef SERIAL_THREAD
     resend_timer.start(n);
+#else
+    s_helper->setAutoWritePriod(n);
+    s_helper->autoWrite(ui_getSendData());
+#endif
+
 }
 
 
@@ -150,6 +180,20 @@ void MainWindow::handle_serial_error(int err)
     }
 }
 
+void MainWindow::handle_serialhelper_readyread()
+{
+    qint64 len = 0, tmp = 0;
+    QByteArray data;
+
+    tmp = s_helper->bytesAvailable();
+    while(tmp > 0){
+        len += tmp;
+        data.append(s_helper->readAll());
+        tmp = s_helper->bytesAvailable();
+    }
+    if(serialStatus == STATUS_OPEN) handle_serial_recieve_data(data, len);
+}
+
 
 void MainWindow::handle_ui_line_mode_changed(int index)
 {
@@ -183,6 +227,7 @@ void MainWindow::update_ui_serial_config()
 
     settingConfig.serialConfig = config;
 
+#ifdef SERIAL_THREAD
     m_mutex.lock();
     serialConfig = config;
     m_mutex.unlock();
@@ -191,6 +236,8 @@ void MainWindow::update_ui_serial_config()
 //        qDebug() << "| Port:" << config.portName << " | Baud:" << config.portBaud << " | DataBit:" << config.portDataBit << " | Parity:" << config.portParity << " | StopBit:" << config.portStopBit << " | Flow:" << config.portFlow;
         emit ui_serial_config_changed();
     }
+#endif
+
 }
 
 void MainWindow::handle_setting_changed(SettingConfig config)
@@ -347,34 +394,40 @@ void MainWindow::ui_initConnect()
         if(isAutorefresh) return;   // 不响应自动刷新导致的变化
         if(index < 0) return;
         this->ui->cbbPort->setToolTip(this->ui->cbbPort->currentText());
+
+        bool op = s_helper->isOpen();
+        if(op) s_helper->close();
+        s_helper->setPortName(ui_serial_getPortName());
+        if(op) s_helper->open(QIODevice::ReadWrite);
+
         update_ui_serial_config();
         qDebug() << "ui:" << ui_serial_getPortName();
-//        emit ui_serial_port_changed(ui_serial_getPortName());
     });
     QObject::connect(this->ui->cbbBaud, QOverload<const QString &>::of(&QComboBox::currentTextChanged), [=](const QString &s){
+        s_helper->setBaudRate(ui_serial_getBaud());
         update_ui_serial_config();
         qDebug() << "ui:" << s;
-//        emit ui_serial_baud_changed(s.toInt());
     });
     QObject::connect(this->ui->cbbDataBit, QOverload<int>::of(&QComboBox::currentIndexChanged), [=](int index){
+        s_helper->setDataBits(ui_serial_getDataBit());
         update_ui_serial_config();
         qDebug() << "ui:" << ui_serial_getDataBit();
-//        emit ui_serial_databit_changed((int)ui_serial_getDataBit());
     });
     QObject::connect(this->ui->cbbParity, QOverload<int>::of(&QComboBox::currentIndexChanged), [=](int index){
+        s_helper->setParity(ui_serial_getParity());
         update_ui_serial_config();
         qDebug() << "ui:" << ui_serial_getParity();
-//        emit ui_serial_parity_changed((int)ui_serial_getParity());
     });
     QObject::connect(this->ui->cbbStop, QOverload<int>::of(&QComboBox::currentIndexChanged), [=](int index){
+        s_helper->setStopBits(ui_serial_getStopBit());
         update_ui_serial_config();
         qDebug() << "ui:" << ui_serial_getParity();
-//        emit ui_serial_stopbit_changed((int)ui_serial_getStopBit());
     });
     QObject::connect(this->ui->cbbFlow, QOverload<int>::of(&QComboBox::currentIndexChanged), [=](int index){
+        s_helper->setFlowControl(ui_serial_getFlow());
         update_ui_serial_config();
         qDebug() << "ui:" << ui_serial_getParity();
-//        emit ui_serial_flowcontrol_changed((int)ui_serial_getFlow());
+
     });
     QObject::connect(this->ui->actionStart, &QAction::triggered, [=](){      // 开始传输, 暂停之后可以再次开始
 //        qDebug() << "actionStart:" << QThread::currentThread();
@@ -382,15 +435,28 @@ void MainWindow::ui_initConnect()
             if(ui_serial_getPortNumber() == 0) return;
             int tmp = serialStatus;
             if((tmp == STATUS_CLOSE) || (tmp == STATUS_OCCUR_ERROR)){
-                ui_serial_toggle_pbtSend(true);
+
+                const SerialConfig config = ui_serial_getConfig();
+                apply_ui_serial_config(config);
+
+                bool os = false;
+                if(!s_helper->isOpen()) os = s_helper->open(QIODevice::ReadWrite);
+
+                if(os) ui_serial_toggle_pbtSend(true);
                 update_ui_serial_config();
+
                 serialStatus = STATUS_OPEN;
+
+#ifdef SERIAL_THREAD
                 emit ui_serial_open();
+#endif
             }
             if(tmp == STATUS_PAUSE){
                 serialStatus = STATUS_OPEN;
+#ifdef SERIAL_THREAD
                 emit ui_serial_start();
-                if(ui_send_isEnableAutoRepeat()) ui_start_resend();
+#endif
+                if(ui_send_isEnableAutoRepeat()) ui_start_resend();   // 自动重发
             }
         }
         if(ui_getCurrentTab() == MainWindow::TAB_NETWORK){
@@ -412,10 +478,18 @@ void MainWindow::ui_initConnect()
             serialStatus = STATUS_CLOSE;
             ui_serial_toggle_pbtSend(false);
             if(ui_send_isEnableAutoRepeat()){
+#ifdef SERIAL_THREAD
                 resend_timer.stop();
+#else
+                s_helper->stopAutoWrite();
+#endif
                 ui_send_setAutoRepeatState(false);
             }
+#ifdef SERIAL_THREAD
             emit ui_serial_close();
+#else
+            s_helper->close();
+#endif
         }
         if(ui_getCurrentTab() == MainWindow::TAB_NETWORK){
             if(ui_net_getProfile() == NetWorkSettingConfig::TCP){
@@ -428,7 +502,11 @@ void MainWindow::ui_initConnect()
             if(serialStatus != STATUS_OPEN) return;
             serialStatus = STATUS_PAUSE;
             if(ui_send_isEnableAutoRepeat()){
+#ifdef SERIAL_THREAD
                 resend_timer.stop();
+#else
+                s_helper->stopAutoWrite();
+#endif
             }
             emit ui_serial_pause();
         }
@@ -550,7 +628,7 @@ void MainWindow::ui_initConnect()
              settingConfig.showConfig.enableShowTime = false;
         }
     });
-
+#ifdef SERIAL_THREAD
     QObject::connect(&resend_timer, &QTimer::timeout, [=](){       // 定时发送
         if(ui_getCurrentTab() == 0){
             if(serialStatus == STATUS_OPEN){
@@ -558,7 +636,7 @@ void MainWindow::ui_initConnect()
             }
         }
     });
-
+#endif
     QObject::connect(this->ui->cbAutoResend, &QCheckBox::stateChanged, [=](int state){    // 是否定时发送
         if(state == Qt::Checked){
             settingConfig.sendConfig.enableAutoResend = true;
@@ -761,6 +839,29 @@ void MainWindow::ui_refreshPort()
 void MainWindow::ui_refreshNetInterface()
 {
 
+}
+
+void MainWindow::apply_ui_serial_config(const SerialConfig &config)
+{
+    // 串口可以动态改变的参数
+//    if(config.portBaud != settingConfig.serialConfig.portBaud){
+        s_helper->setBaudRate(config.portBaud);
+//    }
+//    if(config.portDataBit != settingConfig.serialConfig.portDataBit){
+        s_helper->setDataBits(config.portDataBit);
+//    }
+//    if(config.portStopBit != settingConfig.serialConfig.portStopBit){
+        s_helper->setStopBits(config.portStopBit);
+//    }
+        s_helper->setFlowControl(config.portFlow);
+        s_helper->setParity(config.portParity);
+
+//    if(settingConfig.serialConfig.portName.compare(config.portName) == 0){     // 端口发生改变, 串口的端口不可以动态改变
+        bool op = s_helper->isOpen();
+        if(op) s_helper->close();
+        s_helper->setPortName(config.portName);
+        if(op) s_helper->open(QIODevice::ReadWrite);
+//    }
 }
 
 void MainWindow::ui_log_logSaveToFile(const QString &str)

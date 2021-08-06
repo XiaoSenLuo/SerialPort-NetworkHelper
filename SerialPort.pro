@@ -18,6 +18,7 @@ TARGET = SerialPort
 SOURCES += \
     main.cpp \
     mainwindow.cpp \
+    serialhelper.cpp \
     serialthread.cpp \
     settingconfig.cpp \
     settingdialog.cpp \
@@ -27,6 +28,7 @@ SOURCES += \
 HEADERS += \
     main.h \
     mainwindow.h \
+    serialhelper.h \
     serialthread.h \
     settingconfig.h \
     settingdialog.h \
