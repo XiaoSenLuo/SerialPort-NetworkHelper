@@ -1,18 +1,22 @@
 #include "serialhelper.h"
+#include <QDebug>
 
 SerialHelper::SerialHelper(QObject *parent)
 {
     m_port = new QSerialPort(parent);
+    s_err_connect = QObject::connect(m_port, &QSerialPort::errorOccurred, this, &SerialHelper::handle_QSerialPort_errorOccurred);
 }
 
 SerialHelper::SerialHelper(const QSerialPortInfo &info, QObject *parent)
 {
     m_port = new QSerialPort(info, parent);
+    s_err_connect = QObject::connect(m_port, &QSerialPort::errorOccurred, this, &SerialHelper::handle_QSerialPort_errorOccurred);
 }
 
 SerialHelper::SerialHelper(const QString &name, QObject *parent)
 {
     m_port = new QSerialPort(name, parent);
+    s_err_connect = QObject::connect(m_port, &QSerialPort::errorOccurred, this, &SerialHelper::handle_QSerialPort_errorOccurred);
 }
 
 SerialHelper::~SerialHelper()
@@ -44,14 +48,13 @@ void SerialHelper::setPort(const QSerialPortInfo &info)
         m_port->deleteLater();
     }
     m_port = new QSerialPort(info);
+    s_err_connect = QObject::connect(m_port, &QSerialPort::errorOccurred, this, &SerialHelper::handle_QSerialPort_errorOccurred);
 }
 
 bool SerialHelper::open(QIODevice::OpenMode mode)
 {
     if(!m_port) return false;
-    if(m_port->isOpen()) return true;
-
-    s_err_connect = QObject::connect(m_port, &QSerialPort::errorOccurred, this, &SerialHelper::handle_QSerialPort_errorOccurred);
+//    if(m_port->isOpen()) return true;
 
     return  m_port->open(mode);
 }
@@ -59,8 +62,8 @@ bool SerialHelper::open(QIODevice::OpenMode mode)
 void SerialHelper::close()
 {
     if(!m_port) return;
-    QObject::disconnect(s_err_connect);
-    m_port->close();
+    if(m_port->isOpen()) m_port->close();
+//    QObject::disconnect(s_err_connect);
 }
 
 bool SerialHelper::isOpen() const
@@ -287,8 +290,15 @@ void SerialHelper::startAutoWrite(int msec)
         t_timeout_connect = QObject::connect(m_timer, &QTimer::timeout, this, &SerialHelper::handle_QTimer_timeout);
     }
     m_priod = msec;
+    if(m_timer->isActive()) m_timer->stop();
     m_timer->setInterval(m_priod);
     if(!m_timer->isActive()) m_timer->start();
+}
+
+void SerialHelper::startAutoWrite(const QByteArray &data, int msec)
+{
+    m_auto_data = data;
+    startAutoWrite(msec);
 }
 
 void SerialHelper::setAutoWrite(const QByteArray &data)
@@ -307,6 +317,7 @@ void SerialHelper::stopAutoWrite()
 
 void SerialHelper::handle_QSerialPort_errorOccurred(QSerialPort::SerialPortError error)
 {
+//    qDebug() << error;
     int err = (int)error;
     emit SerialHelper::errorOccurred(err);
 }

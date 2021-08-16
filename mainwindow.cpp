@@ -9,7 +9,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     const QMutexLocker locker(&m_mutex);
 
-    ui_initConnect();
+
     ui_creatToolBar();
     ui_creatStatusBar();
 
@@ -27,8 +27,11 @@ MainWindow::MainWindow(QWidget *parent)
 
     s_helper = new SerialHelper(this);
 
-    QObject::connect(s_helper, &SerialHelper::errorOccurred, this, &MainWindow::handle_serial_error);
-    QMetaObject::Connection s_connect = s_helper->callOnReadyRead(this, &MainWindow::handle_serialhelper_readyread);
+    if(ui_getCurrentTab() == TAB_NETWORK){
+        ui_net_initStatusTable();
+    }
+
+    ui_initConnect();
 }
 
 MainWindow::~MainWindow()
@@ -38,6 +41,24 @@ MainWindow::~MainWindow()
         s_helper->close();
         s_helper->deleteLater();
     }
+}
+
+const QString MainWindow::ui_getSendData()
+{
+    return this->ui->pteSend->toPlainText();
+}
+
+void MainWindow::ui_setSendData(const QString &str)
+{
+    this->ui->pteSend->clear();
+    this->ui->pteSend->insertPlainText(str);
+    this->ui->pteSend->moveCursor(QTextCursor::EndOfLine);
+}
+
+void MainWindow::ui_clearSendData()
+{
+    this->ui->pteSend->clear();
+    this->ui->pteSend->moveCursor(QTextCursor::Start);
 }
 
 void MainWindow::serial_send(const QString &data, int len)
@@ -51,8 +72,6 @@ void MainWindow::serial_send(const QString &data, int len)
         ui_addSendHistory(sendStr);
         const QByteArray sendBytes = sendStr.toUtf8();
         len = sendBytes.size();
-
-
 
         if(ui_send_isEnableAutoRepeat()) s_helper->setAutoWrite(sendBytes);
         else s_helper->write(sendBytes);
@@ -125,9 +144,16 @@ void MainWindow::ui_start_resend()
     resend_timer.start(n);
 #else
     s_helper->setAutoWritePriod(n);
-    s_helper->autoWrite(ui_getSendData());
+    s_helper->startAutoWrite();
 #endif
 
+}
+
+void MainWindow::ui_showMessage(const QString &message, int time, QColor color)
+{
+    //    this->ui->statusbar->showMessage(message, time);
+    //    if(color.isValid()) ui->statusbar->setStyleSheet(QString::fromUtf8("QStatusBar{color:%1;}\n").arg(color.name(QColor::HexArgb)));
+    ui_statusbar_showMessage(message, color);
 }
 
 
@@ -146,10 +172,11 @@ void MainWindow::handle_serial_recieve_data(const QByteArray &data, int len)
     }
 }
 
+
 void MainWindow::handle_serial_error(int err)
 {
-    QSerialPort::SerialPortError error = QSerialPort::SerialPortError(err);
-    const SerialConfig config = ui_serial_getConfig();
+    QSerialPort::SerialPortError error = (QSerialPort::SerialPortError)err;
+    SerialConfig config = ui_serial_getConfig();
     qDebug() << "Serial Error:" << config.errorStr[int(error)];
     switch(error){
     case QSerialPort::NoError:
@@ -169,9 +196,10 @@ void MainWindow::handle_serial_error(int err)
         break;
     case QSerialPort::TimeoutError:
         break;
+    case QSerialPort::NotOpenError:
+        if(serialStatus == STATUS_CLOSE) break;
     default:
         ui_serial_toggle_pbtSend(false);
-
         const QString mes = QString::fromUtf8("%1 串口发生意外错误 [%2]").arg(ui_serial_getPortName()).arg(config.errorStr[(int)error]);
         ui_showMessage(mes, 0, Qt::black);
 
@@ -240,6 +268,46 @@ void MainWindow::update_ui_serial_config()
 
 }
 
+void MainWindow::ui_statusbar_showMessage(const QString &str, QColor color)
+{
+    this->slabel->setText(str);
+    this->slabel->setStyleSheet(QString::fromUtf8("QLabel{color:%1;font:%2pt \"%3\";}").arg(color.name(QColor::HexRgb)).arg(this->font().pointSize()).arg(this->font().family()));
+}
+
+void MainWindow::ui_statusbar_showRxBytes(ulong bytes)
+{
+    this->lbRxBytes->setText(QString::fromUtf8("%1 Bytes").arg(bytes));
+}
+
+void MainWindow::ui_statusbar_showTxBytes(ulong bytes)
+{
+    this->lbTxBytes->setText(QString::fromUtf8("%1 Bytes").arg(bytes));
+}
+
+void MainWindow::ui_statusbar_showLogPath(const QString &str)
+{
+    this->lbLogPath->setText(str);
+    this->lbLogPath->setToolTip(str);
+}
+
+int MainWindow::ui_getCurrentTab()
+{
+    return this->ui->tabWidget->currentIndex();
+}
+
+void MainWindow::ui_log_setLogPath(const QString &p)
+{
+    ui_statusbar_showLogPath(p);
+    this->ui->leLogPath->setText(p);
+    this->ui->leLogPath->setToolTip(p);
+    this->ui->leLogPath->setWhatsThis(QString::fromUtf8("日志文件路径"));
+}
+
+void MainWindow::ui_log_setSaveLogState(bool save)
+{
+    this->ui->cbEnableLog->setCheckable(save);
+}
+
 void MainWindow::handle_setting_changed(SettingConfig config)
 {
     settingConfig = config;
@@ -252,7 +320,6 @@ void MainWindow::handle_setting_changed(SettingConfig config)
     ui_recieve_setRecieveFontColorState(settingConfig.showConfig.enableShowColor);
 
     ui_setShowPlaintFont(settingConfig.showConfig.font);
-
 }
 
 void MainWindow::ui_initSetting(SettingConfig* config)
@@ -287,6 +354,8 @@ void MainWindow::ui_initSetting(SettingConfig* config)
 
 void MainWindow::ui_initConnect()
 {
+    QObject::connect(s_helper, &SerialHelper::errorOccurred, this, &MainWindow::handle_serial_error);
+    QMetaObject::Connection s_connect = s_helper->callOnReadyRead(this, &MainWindow::handle_serialhelper_readyread);
 
     QObject::connect(&refresh_port_timer, &QTimer::timeout, [=](){
         isAutorefresh = true;
@@ -384,7 +453,7 @@ void MainWindow::ui_initConnect()
     QObject::connect(this->ui->tabWidget, &QTabWidget::currentChanged, [=](int index){
         currentTab = index;
         if(index == 0){   // serial
-
+            if(!s_helper) s_helper = new SerialHelper(this);
         }
         if(index == 1){   // tcp/udp
 
@@ -435,18 +504,13 @@ void MainWindow::ui_initConnect()
             if(ui_serial_getPortNumber() == 0) return;
             int tmp = serialStatus;
             if((tmp == STATUS_CLOSE) || (tmp == STATUS_OCCUR_ERROR)){
-
+                serialStatus = STATUS_OPEN;
                 const SerialConfig config = ui_serial_getConfig();
                 apply_ui_serial_config(config);
-
                 bool os = false;
                 if(!s_helper->isOpen()) os = s_helper->open(QIODevice::ReadWrite);
-
                 if(os) ui_serial_toggle_pbtSend(true);
                 update_ui_serial_config();
-
-                serialStatus = STATUS_OPEN;
-
 #ifdef SERIAL_THREAD
                 emit ui_serial_open();
 #endif
@@ -460,15 +524,37 @@ void MainWindow::ui_initConnect()
             }
         }
         if(ui_getCurrentTab() == MainWindow::TAB_NETWORK){
+
             int tmp = networkStatus;
             if(networkStatus == STATUS_CLOSE){
                 networkStatus = STATUS_OPEN;
                 settingConfig.netConfig.ip = ui_net_getIP();
                 settingConfig.netConfig.netRole = ui_net_getRole();
                 settingConfig.netConfig.port = ui_net_getPort();
-                if(ui_net_getProfile() == NetWorkSettingConfig::TCP){
+                settingConfig.netConfig.netProfile = ui_net_getProfile();
 
+                if(settingConfig.netConfig.netProfile == NetWorkSettingConfig::TCP){
+                    if(!tcp_helper) tcp_helper = new TCPHelper(settingConfig.netConfig.netRole, this);
+                    tcp_helper->start(QHostAddress(settingConfig.netConfig.ip), settingConfig.netConfig.port);
+#ifdef NETWORK_THREAD
                     emit ui_tcp_start(settingConfig.netConfig.ip, settingConfig.netConfig.port, settingConfig.netConfig.netRole);
+#endif
+                }else{
+                    if(tcp_helper){
+                        tcp_helper->stop();
+                        tcp_helper->deleteLater();
+                        tcp_helper = nullptr;
+                    }
+                }
+                if(settingConfig.netConfig.netProfile == NetWorkSettingConfig::UDP){
+                    if(!udp_helper) udp_helper = new UDPHelper(settingConfig.netConfig.netRole, this);
+                    udp_helper->start(QHostAddress(settingConfig.netConfig.ip), settingConfig.netConfig.port);
+                }else{
+                    if(udp_helper){
+                        udp_helper->stop();
+                        udp_helper->deleteLater();
+                        udp_helper = nullptr;
+                    }
                 }
             }
         }
@@ -489,16 +575,35 @@ void MainWindow::ui_initConnect()
             emit ui_serial_close();
 #else
             s_helper->close();
+            const QString mes = QString::fromUtf8("%1 CLOSE").arg(ui_serial_getPortName());
+            ui_showMessage(mes, 0, Qt::red);
 #endif
         }
         if(ui_getCurrentTab() == MainWindow::TAB_NETWORK){
             if(ui_net_getProfile() == NetWorkSettingConfig::TCP){
+#ifdef NETWORK_THREAD
                 emit ui_tcp_stop(ui_net_getRole());
+#else
+                if(tcp_helper){
+                    if(ui_send_isEnableAutoRepeat()){
+                        tcp_helper->stopAutoWrite();
+                    }
+                    tcp_helper->stop();
+                }
+#endif
+            }
+            if(settingConfig.netConfig.netRole == NetWorkSettingConfig::UDP){
+                if(udp_helper){
+                    if(ui_send_isEnableAutoRepeat()){
+                        udp_helper->stopAutoWrite();
+                    }
+                    udp_helper->stop();
+                }
             }
         }
     });
     QObject::connect(this->ui->actionPause, &QAction::triggered, [=](){     // 暂停传输, 不会关闭串口
-        if(ui_getCurrentTab() == 0){
+        if(ui_getCurrentTab() == MainWindow::TAB_SERIAL){
             if(serialStatus != STATUS_OPEN) return;
             serialStatus = STATUS_PAUSE;
             if(ui_send_isEnableAutoRepeat()){
@@ -509,6 +614,9 @@ void MainWindow::ui_initConnect()
 #endif
             }
             emit ui_serial_pause();
+        }
+        if(ui_getCurrentTab() == MainWindow::TAB_NETWORK){
+
         }
     });
     QObject::connect(this->ui->actionClear, &QAction::triggered, [=](){        // 清空接收
@@ -561,13 +669,17 @@ void MainWindow::ui_initConnect()
                 config.portStopBit = ui_serial_getStopBit();
 
                 settingConfig.serialConfig = config;
-
+#ifdef SERIAL_THREAD
                 m_mutex.lock();
                 serialConfig = config;
                 m_mutex.unlock();
-
+#else
+                apply_ui_serial_config(config);
+                s_helper->open(QIODevice::ReadWrite);
+#endif
                 serialStatus = STATUS_OPEN;
                 ui_serial_toggle_pbtSend(true);
+
                 emit ui_serial_open();
 
                 goto sendData_section;
@@ -641,11 +753,19 @@ void MainWindow::ui_initConnect()
         if(state == Qt::Checked){
             settingConfig.sendConfig.enableAutoResend = true;
             if(serialStatus != STATUS_OPEN) return;
+#ifdef SERIAL_THREAD
+#else
+            s_helper->setAutoWrite(ui_getSendData().toUtf8());
+#endif
             ui_start_resend();
         }
         if(state == Qt::Unchecked){
             settingConfig.sendConfig.enableAutoResend = false;
+#ifdef SERIAL_THREAD
             if(resend_timer.isActive()) resend_timer.stop();
+#else
+            s_helper->stopAutoWrite();
+#endif
         }
     });
 
@@ -710,7 +830,7 @@ void MainWindow::ui_initConnect()
         QNetworkInterface interface = ui_net_getInterface(&res);
         if(res) settingConfig.netConfig.interface = interface;
 
-        if(ui_net_getRole() == NetWorkSettingConfig::SERVER){
+        if(ui_net_getRole() == NetWorkSettingConfig::Server){
             const QString ip = ui_net_getCurrentInterfaceAddr();
             ui_net_setIP(ip);
         }
@@ -723,17 +843,25 @@ void MainWindow::ui_initConnect()
         if(index == 1){   // Server
             settingConfig.netConfig.netProfile = NetWorkSettingConfig::UDP;
         }
+        ui_net_role_function(index);
     });
     QObject::connect(this->ui->cbbNetRole, QOverload<int>::of(&QComboBox::currentIndexChanged), [=](int index){  // 网络角色
         if(index == 0){  // Client
-            settingConfig.netConfig.netRole = NetWorkSettingConfig::CLIENT;
+            settingConfig.netConfig.netRole = NetWorkSettingConfig::Client;
         }
         if(index == 1){   // Server
-            settingConfig.netConfig.netRole = NetWorkSettingConfig::SERVER;
+            settingConfig.netConfig.netRole = NetWorkSettingConfig::Server;
 
             const QString ip = ui_net_getCurrentInterfaceAddr();
             this->ui->leIPSource->setText(ip);
 //            this->ui->leIPSource->setEnabled(false);
+        }
+        if(index == 2){   // 多播
+            settingConfig.netConfig.netRole = NetWorkSettingConfig::Multicast;
+        }
+        if(index == 3){   // 广播
+            settingConfig.netConfig.netRole = NetWorkSettingConfig::Broadcast;
+            this->ui->leIPSource->setText(QHostAddress(QHostAddress::Broadcast).toString());
         }
     });
 
@@ -741,7 +869,53 @@ void MainWindow::ui_initConnect()
         settingConfig.netConfig.port = value;
     });
 
+    // 初始化TableWidget 信号槽连接
+    // 单击, 单次选择
+    QObject::connect(this->ui->tbwShowConnnectStatus, &QTableWidget::cellClicked, [=](int row, int column){
+        qDebug() << QString::fromUtf8("单击选择: ") << "(" << row << ", " << column << ")";
+        int minRow = 0, maxRow = 0;
+//        Qt::KeyboardModifiers key = QApplication::keyboardModifiers();
 
+        QList<QTableWidgetSelectionRange> ranges = this->ui->tbwShowConnnectStatus->selectedRanges();
+        if(ranges.isEmpty()) return;
+
+        for(int i = 0; i < ranges.size(); i++){
+            int _max = std::max(ranges.at(i).topRow(), ranges.at(i).bottomRow());
+            int _min = std::min(ranges.at(i).topRow(), ranges.at(i).bottomRow());
+            int m = _min;
+            int index = -1;
+//            while (m <= _max) {
+//                index = seleteRows.indexOf(m);
+//                if(index < 0){
+//                    seleteRows.append(m);
+//                    m += 1;
+//                }
+//            }
+//                qDebug() << "[" << i << "]:" << ranges.at(i).topRow() << "|" << ranges.at(i).leftColumn() << "|" << ranges.at(i).bottomRow() << "|" << ranges.at(i).rightColumn() ;
+//                this->ui->tbwShowConnnectStatus->setRangeSelected(QTableWidgetSelectionRange(ranges.at(i).topRow(), 0, ranges.at(i).bottomRow(), this->ui->tbwShowConnnectStatus->columnCount() - 1), true);
+        }
+
+//        minRow = (minRow > row) ? row : minRow;
+//        maxRow = (maxRow < row) ? row : maxRow;
+//        qDebug() << minRow << "|" << maxRow;
+//        this->ui->tbwShowConnnectStatus->setRangeSelected(QTableWidgetSelectionRange(minRow, 0, maxRow, this->ui->tbwShowConnnectStatus->columnCount() - 1), true);
+    });
+    // 双击, 移除选择
+    QObject::connect(this->ui->tbwShowConnnectStatus, &QTableWidget::cellDoubleClicked, [=](int row, int column){
+//        QList<QTableWidgetSelectionRange> ranges = this->ui->tbwShowConnnectStatus->selectedRanges();
+        QList<QTableWidgetSelectionRange> ranges = this->ui->tbwShowConnnectStatus->selectedRanges();
+        for(int i = 0; i < ranges.size(); i++){
+
+            this->ui->tbwShowConnnectStatus->setRangeSelected(QTableWidgetSelectionRange(ranges.at(i).topRow(), 0, ranges.at(i).bottomRow(), this->ui->tbwShowConnnectStatus->columnCount() - 1), true);
+        }
+        this->ui->tbwShowConnnectStatus->setRangeSelected(QTableWidgetSelectionRange(row, 0, row, this->ui->tbwShowConnnectStatus->columnCount() - 1), false);
+
+    });
+
+    QObject::connect(this->ui->tbwShowConnnectStatus, &QTableWidget::customContextMenuRequested, [=](const QPoint &pos){
+        qDebug() << pos;
+
+    });
 }
 
 void MainWindow::ui_creatStatusBar()
@@ -858,9 +1032,10 @@ void MainWindow::apply_ui_serial_config(const SerialConfig &config)
 
 //    if(settingConfig.serialConfig.portName.compare(config.portName) == 0){     // 端口发生改变, 串口的端口不可以动态改变
         bool op = s_helper->isOpen();
+        QIODevice::OpenMode md = s_helper->openMode();
         if(op) s_helper->close();
         s_helper->setPortName(config.portName);
-        if(op) s_helper->open(QIODevice::ReadWrite);
+        if(op) s_helper->open(md);
 //    }
 }
 
@@ -902,6 +1077,309 @@ void MainWindow::ui_log_seleteLogPath()
         settingConfig.logConfig.filePath = p;
         ui_log_setLogPath(p);
     }
+}
+
+const SerialConfig MainWindow::ui_serial_getConfig()
+{
+    SerialConfig config;
+    config.portName = ui_serial_getPortName();
+    config.portDataBit = ui_serial_getDataBit();
+    config.portFlow = ui_serial_getFlow();
+    config.portBaud = ui_serial_getBaud();
+    config.portParity = ui_serial_getParity();
+    config.portStopBit = ui_serial_getStopBit();
+    return config;
+}
+
+void MainWindow::ui_serial_addPortName(const QSerialPortInfo info)
+{
+    this->ui->cbbPort->addItem(ui_serial_makePortName(info));
+}
+
+void MainWindow::ui_serial_addPortNames(const QList<QSerialPortInfo> list)
+{
+    for(int i = 0; i < list.size(); i++){
+        this->ui->cbbPort->addItem(QString::fromUtf8("[%1]%2").arg(list.at(i).portName()).arg(list.at(i).description()));
+    }
+}
+
+void MainWindow::ui_serial_clearPortNameExceptIndex(int index)
+{
+    // TODO
+
+    if(index < 0){
+        this->ui->cbbPort->clear();
+        return;
+    }
+
+    int ps = this->ui->cbbPort->count();
+    if(index > (ps - 1)) return;
+    int ri = ((index - 1) >= 0) ? (index - 1) : (index + 1);
+    while((ri >= 0) && (ri < (this->ui->cbbPort->count()))){
+        this->ui->cbbPort->removeItem(ri);
+        index -= 1;
+        if(index >= 0) ri = ((index - 1) >= 0) ? (index - 1) : (index + 1);
+        else ri = 1;
+
+    }
+}
+
+void MainWindow::ui_serial_clearPortNameExceptCurrent()
+{
+    while(this->ui->cbbPort->count() > 1){
+        this->ui->cbbPort->removeItem(1);
+    }
+}
+
+void MainWindow::ui_serial_setPortName(QSerialPortInfo info)
+{
+    const QString pn = QString::fromUtf8("[%1]%2").arg(info.portName()).arg(info.description());
+    this->ui->cbbPort->setCurrentText(pn);
+}
+
+void MainWindow::ui_serial_setBaud(qint64 baud)
+{
+    this->ui->cbbBaud->setCurrentText(QString::fromUtf8("%1").arg(baud));
+}
+
+void MainWindow::ui_serial_setDataBit(QSerialPort::DataBits d)
+{
+    this->ui->cbbDataBit->setCurrentIndex(d - this->ui->cbbDataBit->itemText(0).toInt());
+}
+
+void MainWindow::ui_serial_setParity(QSerialPort::Parity p)
+{
+    int pi = (int)p;
+    if(pi > 0) pi -= 1;
+    this->ui->cbbParity->setCurrentIndex(pi);
+}
+
+void MainWindow::ui_serial_setStopBit(QSerialPort::StopBits s)
+{
+    this->ui->cbbStop->setCurrentIndex(s - 1);
+}
+
+void MainWindow::ui_serial_setFlow(QSerialPort::FlowControl f)
+{
+    this->ui->cbbFlow->setCurrentIndex(f);
+}
+
+void MainWindow::ui_serial_setConfig(SerialConfig config)
+{
+    QSerialPortInfo info(config.portName);
+    ui_serial_setPortName(info);
+    ui_serial_setBaud(config.portBaud);
+    ui_serial_setDataBit(config.portDataBit);
+    ui_serial_setParity(config.portParity);
+    ui_serial_setStopBit(config.portStopBit);
+    ui_serial_setFlow(config.portFlow);
+}
+
+void MainWindow::ui_serial_toggle_pbtSend(bool _isOpen)
+{
+    if(_isOpen){
+        this->ui->pbtSend->setText(QString::fromUtf8("发送"));
+    }else{
+        this->ui->pbtSend->setText(QString::fromUtf8("打开"));
+    }
+}
+
+void MainWindow::ui_net_role_function(int protocol)
+{
+    QStringList strs = {QString::fromUtf8("Client"), QString::fromUtf8("Server"), QString::fromUtf8("多播"), QString::fromUtf8("广播")};
+    if(NetWorkSettingConfig::TCP == protocol){
+        this->ui->cbbNetRole->clear();
+        for(int i = 0; i < 2; i++){
+            this->ui->cbbNetRole->addItem(strs.at(i));
+        }
+        this->ui->cbbNetRole->setCurrentIndex(0);
+    }
+    if(NetWorkSettingConfig::UDP == protocol){
+        this->ui->cbbNetRole->clear();
+        this->ui->cbbNetRole->addItems(strs);
+        this->ui->cbbNetRole->setCurrentIndex(0);
+    }
+}
+
+void MainWindow::ui_net_addInterface(QNetworkInterface interface)
+{
+    this->ui->cbbNetworkInterface->addItem(ui_net_makeInterfaceStr(interface));
+}
+
+const QString MainWindow::ui_net_getCurrentInterfaceHardAddr()
+{
+    int ns = this->ui->cbbNetworkInterface->count();
+    if(ns == 0) return QString("");
+    const QString str = this->ui->cbbNetworkInterface->currentText();
+    int pos = str.indexOf('[');
+    int pos2 = str.indexOf(']');
+    return str.mid(pos + 1, pos2 - pos - 1);
+}
+
+const QString MainWindow::ui_net_getCurrentInterfaceHumanNamme()
+{
+    int ns = this->ui->cbbNetworkInterface->count();
+    if(ns == 0) return QString("");
+    const QString str = this->ui->cbbNetworkInterface->currentText();
+    int pos = str.indexOf('[');
+
+    return str.mid(0, pos - 1);
+}
+
+const QString MainWindow::ui_net_getCurrentInterfaceAddr(bool ipv6)
+{
+    int ns = this->ui->cbbNetworkInterface->count();
+    if(ns == 0) return QString("");
+
+    const QString str = ui_net_getCurrentInterfaceHardAddr();
+
+    QList<QNetworkInterface> list = QNetworkInterface::allInterfaces();
+    QNetworkInterface interface;
+    QHostAddress addr;
+    QList<QNetworkAddressEntry> alist;
+
+    if(list.isEmpty()) return QString("");
+    for(int i = 0; i < list.size(); i++){
+        interface = list.at(i);
+        if(str == interface.hardwareAddress()){
+            alist = interface.addressEntries();
+            if(alist.isEmpty()) return QString("");
+            for(int j = 0; j < alist.size(); j++){
+                addr = alist.at(j).ip();
+                if(addr.isLoopback()){
+                    goto ip_section;
+                }
+                if(!addr.isGlobal() || addr.isNull()) continue;
+            ip_section:
+                uint32_t ip = addr.toIPv4Address();
+                if(ipv6){
+                    return QHostAddress(addr.toIPv6Address()).toString();
+                }
+                if(ip) return QHostAddress(ip).toString();
+            }
+        }
+    }
+    return QString("");
+}
+
+void MainWindow::ui_net_setCurrentInterface(QNetworkInterface interface)
+{
+    const QString str = ui_net_makeInterfaceStr(interface);
+    int find = this->ui->cbbNetworkInterface->findText(str);
+
+    if(find != -1){
+        this->ui->cbbNetworkInterface->setCurrentIndex(find);
+    }else{
+        this->ui->cbbNetworkInterface->addItem(str);
+        this->ui->cbbNetworkInterface->setCurrentIndex(this->ui->cbbNetworkInterface->count() - 1);
+    }
+}
+
+QNetworkInterface MainWindow::ui_net_getInterface(bool *ok)
+{
+    int ns = this->ui->cbbNetworkInterface->count();
+    *ok = false;
+    if(ns == 0){
+        return QNetworkInterface();
+    }
+    QString str = ui_net_getCurrentInterfaceHardAddr();
+
+    QList<QNetworkInterface> list = QNetworkInterface::allInterfaces();
+    QNetworkInterface interface;
+    QHostAddress addr;
+    QList<QNetworkAddressEntry> alist;
+    if(list.isEmpty()){
+        return QNetworkInterface();
+    }
+    for(int i = 0; i < list.size(); i++){
+        interface = list.at(i);
+        if(str == interface.hardwareAddress()){
+            *ok = true;
+            return interface;
+        }
+    }
+    return QNetworkInterface();
+}
+
+bool MainWindow::ui_net_isEnableIPV6()
+{
+    return this->ui->cbEnableIPV6->isChecked();
+}
+
+int MainWindow::ui_net_getRole()
+{
+    return this->ui->cbbNetRole->currentIndex();
+}
+
+int MainWindow::ui_net_getProfile()
+{
+    return this->ui->cbbNetProfile->currentIndex();
+}
+
+int MainWindow::ui_net_getPort()
+{
+    return this->ui->sbSourcePort->value();
+}
+
+const QString MainWindow::ui_net_getIP()
+{
+    return this->ui->leIPSource->text();
+}
+
+void MainWindow::ui_net_setIP(const QString &ip)
+{
+    this->ui->leIPSource->setText(ip);
+}
+
+void MainWindow::ui_net_initStatusTable()
+{
+//    if(!clientModel) clientModel = new QStandardItemModel(0, 3);
+//    clientModel->setHorizontalHeaderLabels(QStringList() << QString::fromUtf8("状态") << QString::fromUtf8("IP") << QString::fromUtf8("端口"));
+//    this->ui->tbvClientConnection->setModel(clientModel);
+
+    QHeaderView *header = nullptr;
+
+    header = this->ui->tbwShowConnnectStatus->horizontalHeader();
+    header->setDefaultAlignment(Qt::AlignCenter);
+    header->setSectionResizeMode(QHeaderView::ResizeToContents);
+
+    ui_net_addConnectionToTable("127.255.255.255", "127.0.0.1", 0, 80);
+    ui_net_addConnectionToTable("127.0.0.1", "127.255.255.255", 1, 8080);
+    ui_net_addConnectionToTable("127.255.255.255", "127.0.0.1", 0, 8081);
+    ui_net_addConnectionToTable("127.0.0.1", "127.255.255.255", 1, 9803);
+    ui_net_addConnectionToTable("127.255.255.255", "127.0.0.1", 0, 3459);
+    ui_net_addConnectionToTable("127.0.0.1", "127.255.255.255", 1, 65535);
+}
+
+void MainWindow::ui_net_addConnectionToTable(const QString &source_ip, const QString& des_ip,int status, int port)
+{
+//    if(!clientModel) return;
+//    QList<QTableWidgetItem *> items;
+    QList<QString> ins = {source_ip, QString::fromUtf8("%1").arg(status), des_ip, QString::fromUtf8("%1").arg(port)};
+    if(status > 0){
+        ins.replace(1, QString::fromUtf8("<--->"));
+    }
+    if(status == 0){
+        ins.replace(1, QString::fromUtf8("<-/->"));
+    }
+
+//    for(int i = 0; i < ins.count(); i++){
+//        items.append(new QTableWidgetItem(ins.at(i)));
+//    }
+    int row_count = this->ui->tbwShowConnnectStatus->rowCount();
+
+//    this->ui->tbwShowConnnectStatus->setRowCount(count);
+
+    this->ui->tbwShowConnnectStatus->insertRow(row_count);
+
+    int col_count = ins.count();
+    for(int i = 0; i < col_count; i++){
+        QTableWidgetItem *item = new QTableWidgetItem(ins.at(i));
+        item->setTextAlignment(Qt::AlignCenter);
+        this->ui->tbwShowConnnectStatus->setItem(row_count, i, item);
+    }
+//    clientModel->appendRow(items);
+
 }
 
 void MainWindow::ui_showTime()
@@ -1060,6 +1538,158 @@ void MainWindow::ui_clearSendHistory()
     while(this->ui->cbbSendHistory->count() > 0){
         this->ui->cbbSendHistory->removeItem(0);
     }
+}
+
+void MainWindow::ui_recieve_initRecieveFontColor()
+{
+//        QList<QColor> colors = {Qt::black, Qt::blue, Qt::darkGray,  Qt::white};
+    QImage im(QSize(64, 32), QImage::Format_RGB32);
+//        int s = colors.size();
+    for(int i = 2; i < 19; i++){
+        im.fill(Qt::GlobalColor(i));
+        this->ui->cbbRecFontColor->addItem(QIcon(QPixmap::fromImage(im)), "");
+    }
+    this->ui->cbbRecFontColor->setCurrentIndex(7);
+}
+
+QColor MainWindow::ui_recieve_getRecieveFontColor()
+{
+    return Qt::GlobalColor(this->ui->cbbRecFontColor->currentIndex() + 2);
+}
+
+void MainWindow::ui_recieve_setRecieveFontColorState(bool state)
+{
+    this->ui->cbRecShowFontColor->setChecked(state);
+}
+
+void MainWindow::ui_setShowPlaintFont(const QFont &font)
+{
+    this->ui->pteSend->setFont(font);
+    this->ui->pteShowRecieve->setFont(font);
+}
+
+int MainWindow::ui_serial_getPortNumber()
+{
+    return this->ui->cbbPort->count();
+}
+
+const QString MainWindow::ui_serial_getPortName()
+{
+    if(ui_serial_getPortNumber() == 0) return QString::fromUtf8("");
+    const QString pn = this->ui->cbbPort->currentText();
+    int pos = pn.indexOf(']');
+    return pn.mid(1, pos - 1);
+}
+
+qint64 MainWindow::ui_serial_getBaud()
+{
+    return this->ui->cbbBaud->currentText().toLongLong();
+}
+
+QSerialPort::DataBits MainWindow::ui_serial_getDataBit()
+{
+    return QSerialPort::DataBits(this->ui->cbbDataBit->currentText().toInt());
+}
+
+QSerialPort::Parity MainWindow::ui_serial_getParity()
+{
+    int pi = this->ui->cbbParity->currentIndex();
+    if(pi > 0){
+        pi += 1;
+    }
+    return QSerialPort::Parity(pi);
+}
+
+QSerialPort::StopBits MainWindow::ui_serial_getStopBit()
+{
+    return QSerialPort::StopBits(this->ui->cbbStop->currentIndex() + 1);
+}
+
+QSerialPort::FlowControl MainWindow::ui_serial_getFlow()
+{
+    return QSerialPort::FlowControl(this->ui->cbbFlow->currentIndex());
+}
+
+int MainWindow::ui_recieve_getRecieveMode()
+{
+    if(this->ui->rbtRASCII->isChecked()){
+        return ASCII_MODE;
+    }
+    if(this->ui->rbtRHex->isChecked()){
+        return HEX_MODE;
+    }
+    return ASCII_MODE;
+}
+
+bool MainWindow::ui_show_isEnableAutoNewLine()
+{
+    return this->ui->cbAutoNewLine->isChecked();
+}
+
+bool MainWindow::ui_show_isEnableShowSend()
+{
+    return this->ui->cbShowSend->isChecked();
+}
+
+bool MainWindow::ui_show_isEnableShowTime()
+{
+    return this->ui->cbShowTime->isChecked();
+}
+
+bool MainWindow::ui_isEnableBufferMode()
+{
+    return this->ui->cbRecBufferMode->isChecked();
+}
+
+bool MainWindow::ui_show_isEnableShowColor()
+{
+    return this->ui->cbRecShowFontColor->isChecked();
+}
+
+int MainWindow::ui_recvieve_getBufferSize()
+{
+    return this->ui->sbRecBufferSize->value();
+}
+
+int MainWindow::ui_send_getSendMode()
+{
+    if(this->ui->rbtSASCII->isChecked()){
+        return ASCII_MODE;
+    }
+    if(this->ui->rbtSHex->isChecked()){
+        return HEX_MODE;
+    }
+    return ASCII_MODE;
+}
+
+bool MainWindow::ui_send_isEnableAutoRepeat()
+{
+    return this->ui->cbAutoResend->isChecked();
+}
+
+void MainWindow::ui_send_setAutoRepeatState(bool set)
+{
+    this->ui->cbAutoResend->setCheckState(set ? Qt::Checked : Qt::Unchecked);
+}
+
+int MainWindow::ui_send_getRepeatTime()
+{
+    return this->ui->sbRetime->value();
+}
+
+int MainWindow::ui_send_getRepeatTimeUnit()
+{
+    return this->ui->cbbRetimeUnit->currentIndex();
+}
+
+const QString MainWindow::ui_log_getLogPath()
+{
+    return this->ui->leLogPath->text();
+}
+
+bool MainWindow::ui_log_isEnableLog()
+{
+    return this->ui->cbEnableLog->isChecked();
 }
 
 bool MainWindow::event(QEvent *event)

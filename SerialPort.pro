@@ -22,8 +22,8 @@ SOURCES += \
     serialthread.cpp \
     settingconfig.cpp \
     settingdialog.cpp \
-    tcpthread.cpp \
-    udpthread.cpp
+    tcphelper.cpp \
+    udphelper.cpp
 
 HEADERS += \
     main.h \
@@ -32,8 +32,8 @@ HEADERS += \
     serialthread.h \
     settingconfig.h \
     settingdialog.h \
-    tcpthread.h \
-    udpthread.h
+    tcphelper.h \
+    udphelper.h
 
 FORMS += \
     mainwindow.ui \

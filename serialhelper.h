@@ -86,6 +86,7 @@ public:
     int autoWritePriod(void);
     void setAutoWrite(const QByteArray &data);
     void startAutoWrite(int msec = 0);
+    void startAutoWrite(const QByteArray &data, int msec = 0);
     void stopAutoWrite(void);
 
     template <typename ... Args>

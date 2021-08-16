@@ -2,10 +2,19 @@
 
 #include <QApplication>
 #include <QThread>
-#include "serialthread.h"
+
 #include "main.h"
+
+#ifdef SERIAL_THRAED
+#include "serialthread.h"
+#else
+
+#endif
+
+#ifdef NETWORK_THREAD
 #include "tcpthread.h"
 #include "udpthread.h"
+#endif
 
 SerialConfig serialConfig;
 
@@ -15,14 +24,15 @@ int main(int argc, char *argv[])
     MainWindow w;
 #ifdef    SERIAL_THREAD
     QThread sThread;
+    SerialThread *serialThread = new SerialThread();
 #endif
+
+#ifdef NETWORK_THREAD
     QThread tThread;
     QThread uThread;
-
-//    SerialThread *serialThread = new SerialThread();
     TCPThread *tcpThread = new TCPThread();
     UDPThread *udpThread = new UDPThread();
-
+#endif
 #ifdef SERIAL_THREAD
 //    qDebug() << "Main:" << QThread::currentThread();
     QObject::connect(&w, &MainWindow::ui_serial_config_changed, serialThread, &SerialThread::handle_serial_changed);
@@ -39,6 +49,7 @@ int main(int argc, char *argv[])
     sThread.start();
 #endif
 
+#ifdef NETWORK_THREAD
     // TCP
     QObject::connect(&w, &MainWindow::ui_tcp_start, tcpThread, &TCPThread::tcp_start);
     QObject::connect(&w, &MainWindow::ui_tcp_stop, tcpThread, &TCPThread::tcp_stop);
@@ -57,7 +68,7 @@ int main(int argc, char *argv[])
 
     tcpThread->moveToThread(&tThread);
     tThread.start();
-
+#endif
 
 
     //UDP
@@ -72,12 +83,13 @@ int main(int argc, char *argv[])
     sThread.terminate();
     sThread.wait();
 #endif
-
+#ifdef NETWORK_THREAD
     tThread.exit();
     tThread.wait();
 
     uThread.exit();
     uThread.wait();
+#endif
 
     return res;
 }

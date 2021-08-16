@@ -120,12 +120,12 @@ public :
     int port;
     QString ip;
 
-enum { CLIENT = 0, SERVER = 1};
+enum { Client = 0, Server = 1, Multicast = 2, Broadcast = 3};
 enum { TCP = 0, UDP = 1};
 
     NetWorkSettingConfig(){
         ip = QString::fromUtf8("127.0.0.1");
-        netRole = CLIENT;
+        netRole = Client;
         netProfile = TCP;
         port = 8080;
 
