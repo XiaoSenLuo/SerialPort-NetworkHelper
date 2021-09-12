@@ -58,8 +58,6 @@ public:
     void serial_send(const QString &data, int len);
     void serial_send(void);
 
-    void ui_start_resend(void);
-
     void ui_showMessage(const QString &message, int time = 0, QColor color = Qt::darkGreen);
 
     enum DEVICE_STATUS{STATUS_CLOSE = -1, STATUS_OPEN = 0, STATUS_PAUSE = 1, STATUS_OCCUR_ERROR = 2};
@@ -91,7 +89,8 @@ public:
 
     bool ui_send_isEnableAutoRepeat(void);
     void ui_send_setAutoRepeatState(bool set);
-    int ui_send_getRepeatTime(void);
+
+    int ui_send_getRepeatTime(void);  // Unit: ms
 
     int ui_send_getRepeatTimeUnit(void);
 

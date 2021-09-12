@@ -116,39 +116,6 @@ void MainWindow::serial_send(void)
     serial_send(sendStr, len);
 }
 
-void MainWindow::ui_start_resend()
-{
-    int n = this->ui->sbRetime->value();
-#ifdef SERIAL_THREAD
-    if(resend_timer.isActive()) resend_timer.stop();
-#endif
-    if(n == 0){
-        return;
-    }
-    int index = this->ui->cbbRetimeUnit->currentIndex();
-    switch(index){
-    case 0:
-        n *= 1;
-        break;
-    case 1:
-        n *= 1000;
-        break;
-    case 2:
-        n *= (1000 * 60);
-        break;
-    case 3:
-        n *= (1000 * 60 * 60);
-        break;
-    }
-#ifdef SERIAL_THREAD
-    resend_timer.start(n);
-#else
-    s_helper->setAutoWritePriod(n);
-    s_helper->startAutoWrite();
-#endif
-
-}
-
 void MainWindow::ui_showMessage(const QString &message, int time, QColor color)
 {
     //    this->ui->statusbar->showMessage(message, time);
@@ -161,14 +128,30 @@ void MainWindow::handle_serial_recieve_data(const QByteArray &data, int len)
 {
     rxBytes += len;
     ui_statusbar_showRxBytes(rxBytes);
-    if(settingConfig.showConfig.enableAutoNewLine){
-//        int ep = data.indexOf(QByteArray(settingConfig.lineEnd[settingConfig.lineMode]));
-//        if(ep >= 0){
 
-//        }
-        ui_showRecieveData(data, len);
+    if(settingConfig.recConfig.bufferMode){
+        if(settingConfig.recConfig.bufferSize  > (recieveBuffer.size() + data.size())){
+            recieveBuffer.append(data);
+            return;
+        }else{
+            recieveBuffer.append(data);
+            // show
+            ui_showRecieveData(recieveBuffer, recieveBuffer.size());
+            recieveBuffer.clear();
+        }
     }else{
+        if(!recieveBuffer.isEmpty()){
+            ui_showRecieveData(recieveBuffer, recieveBuffer.size());
+            recieveBuffer.clear();
+        }
         ui_showRecieveData(data, len);
+    }
+
+
+    if(settingConfig.showConfig.enableAutoNewLine){
+
+    }else{
+
     }
 }
 
@@ -334,7 +317,7 @@ void MainWindow::ui_initSetting(SettingConfig* config)
     config->recConfig.showMode = ui_recieve_getRecieveMode();
     config->recConfig.bufferSize = ui_recvieve_getBufferSize();
 
-    config->sendConfig.ResendTime = ui_send_getRepeatTime();
+    config->sendConfig.ResendTime = ui_send_getRepeatTime();   // ms
     config->sendConfig.ResendUnit = ui_send_getRepeatTimeUnit();
     config->sendConfig.enableAutoResend = ui_send_isEnableAutoRepeat();
     config->sendConfig.sendMode = ui_send_getSendMode();
@@ -520,7 +503,7 @@ void MainWindow::ui_initConnect()
 #ifdef SERIAL_THREAD
                 emit ui_serial_start();
 #endif
-                if(ui_send_isEnableAutoRepeat()) ui_start_resend();   // 自动重发
+                if(ui_send_isEnableAutoRepeat()) s_helper->startAutoWrite(ui_send_getRepeatTime());   // 自动重发
             }
         }
         if(ui_getCurrentTab() == MainWindow::TAB_NETWORK){
@@ -757,7 +740,7 @@ void MainWindow::ui_initConnect()
 #else
             s_helper->setAutoWrite(ui_getSendData().toUtf8());
 #endif
-            ui_start_resend();
+            s_helper->startAutoWrite(ui_send_getRepeatTime());
         }
         if(state == Qt::Unchecked){
             settingConfig.sendConfig.enableAutoResend = false;
@@ -772,12 +755,12 @@ void MainWindow::ui_initConnect()
     QObject::connect(this->ui->sbRetime, QOverload<int>::of(&QSpinBox::valueChanged), [=](int value){    // 设置定时发送时间
         settingConfig.sendConfig.ResendTime = value;
         if(serialStatus != STATUS_OPEN) return;
-        if(settingConfig.sendConfig.enableAutoResend) ui_start_resend();
+        if(settingConfig.sendConfig.enableAutoResend) s_helper->startAutoWrite(ui_send_getRepeatTime());
     });
     QObject::connect(this->ui->cbbRetimeUnit, QOverload<int>::of(&QComboBox::currentIndexChanged), [=](int index){    // 设置定时时间单位
         settingConfig.sendConfig.ResendUnit = index;
         if(serialStatus != STATUS_OPEN) return;
-        if(settingConfig.sendConfig.enableAutoResend) ui_start_resend();
+        if(settingConfig.sendConfig.enableAutoResend) s_helper->startAutoWrite(ui_send_getRepeatTime());
     });
     QObject::connect(this->ui->tbtSeleteLogPath, &QToolButton::clicked, [=](bool b){  // 选择日志路径
         ui_log_seleteLogPath();
@@ -1418,19 +1401,7 @@ void MainWindow::ui_showRecieve(const QString &s, bool t)
 {
     QString hStr;
     QString dStr;
-    QString str;
-    if(settingConfig.recConfig.bufferMode){
-        if(settingConfig.recConfig.bufferSize  > (recieveBuffer.size() + str.size())){
-            recieveBuffer.append(s.toUtf8());
-            return;
-        }else{
-            str = QString::fromUtf8(recieveBuffer) + s;
-            recieveBuffer.clear();
-        }
-    }else{
-        if(!recieveBuffer.isEmpty()) recieveBuffer.clear();
-        str = QString(s);
-    }
+    QString str = s;
 
     int pos = this->ui->pteShowRecieve->textCursor().position();
     if(pos > (settingConfig.showConfig.bufferSize << 10 << 10)){
@@ -1674,7 +1645,8 @@ void MainWindow::ui_send_setAutoRepeatState(bool set)
 
 int MainWindow::ui_send_getRepeatTime()
 {
-    return this->ui->sbRetime->value();
+    const int unit[] = {1, 1000, 1000 * 60, 1000 * 60 * 60};
+    return this->ui->sbRetime->value() * unit[ui_send_getRepeatTimeUnit()];
 }
 
 int MainWindow::ui_send_getRepeatTimeUnit()

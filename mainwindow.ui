@@ -84,7 +84,11 @@
        <item row="1" column="0">
         <layout class="QHBoxLayout" name="horizontalLayout_4">
          <item>
-          <widget class="QCheckBox" name="cbAutoNewLine"/>
+          <widget class="QCheckBox" name="cbAutoNewLine">
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+          </widget>
          </item>
          <item>
           <widget class="QLabel" name="Label_7">
